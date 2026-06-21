@@ -102,7 +102,11 @@
 
         async init() {
           try {
-            this.todos = await pb.collection('todos').getFullList({ sort: '-created' });
+            const page = await pb.collection('todos').getList(1, 500, {
+              sort: '-created',
+              skipTotal: true,
+            });
+            this.todos = page.items;
           } catch (err) {
             this.error = err.message;
           } finally {
