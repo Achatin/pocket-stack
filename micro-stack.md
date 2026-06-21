@@ -123,9 +123,8 @@ If port 8090 is in use:
 On first run, visit `http://127.0.0.1:8090/_/` in a browser — or use the API:
 
 ```bash
-curl -X POST http://127.0.0.1:8090/api/admins \
-  -H "Content-Type: application/json" \
-  -d '{"email":"admin@local.dev","password":"password1234","passwordConfirm":"password1234"}'
+# Create admin via CLI (works on all versions):
+./pocketbase superuser upsert admin@local.dev password1234
 ```
 
 Store these credentials. They are needed for schema operations.
@@ -280,7 +279,7 @@ This is the starting point for every app. Copy it verbatim, then modify.
   ============================================================ -->
   <script>
     // PocketBase client — singleton, used everywhere
-    const pb = new PocketBase('http://127.0.0.1:8090');
+    const pb = new PocketBase(window.location.origin);
 
     // Global error display utility
     function showToast(msg) {
@@ -295,6 +294,14 @@ This is the starting point for every app. Copy it verbatim, then modify.
       showToast(`Request failed: ${e.detail.xhr.status} ${e.detail.xhr.responseText}`);
     });
 
+    // ── Debug logging ───────────────────────────────────────
+    // Agents: wrap all SDK calls with console.log for observability.
+    // Pattern: log the operation, the response, and any errors.
+    // Users can check browser console (F12) to see what the agent sees.
+    function debugLog(label, data) {
+      console.log(`[${label}]`, data);
+    }
+
     // Alpine app — all state and logic lives here
     function app() {
       return {
@@ -307,10 +314,13 @@ This is the starting point for every app. Copy it verbatim, then modify.
         // ── Lifecycle ──────────────────────────────────────────
         async init() {
           try {
-            this.items = await pb.collection('items').getFullList({
-              sort: '-created',
+            const page = await pb.collection('items').getList(1, 200, {
+              sort: '-id',
             });
+            debugLog('init', { count: page.items.length, total: page.totalItems });
+            this.items = page.items;
           } catch (err) {
+            debugLog('init error', err);
             this.error = err.message;
           } finally {
             this.loading = false;
@@ -351,16 +361,24 @@ This is the starting point for every app. Copy it verbatim, then modify.
 
 ## Pocketbase Reference
 
+> **Version note:** This section reflects PocketBase v0.39+. Key changes from earlier versions:
+> - Admin auth moved to `/api/collections/_superusers/auth-with-password` (old `/api/admins/auth-with-password` returns 404)
+> - Schema management uses `fields` key (not `schema`) in collection create/PATCH requests
+> - `getFullList()` sends `perPage=1000` which exceeds the v0.39 max of 200 — use `getList(1, 200, ...)` instead
+> - Admin creation via CLI: `./pocketbase superuser upsert EMAIL PASS`
+
 ### Authentication
 
 ```bash
 # Authenticate as admin (needed for schema operations)
-ADMIN_TOKEN=$(curl -s -X POST http://127.0.0.1:8090/api/admins/auth-with-password \
+# PocketBase v0.39+ uses the _superusers collection:
+ADMIN_TOKEN=$(curl -s -X POST http://127.0.0.1:8090/api/collections/_superusers/auth-with-password \
   -H "Content-Type: application/json" \
   -d '{"identity":"admin@local.dev","password":"password1234"}' \
   | jq -r '.token')
 
-echo $ADMIN_TOKEN   # verify token was retrieved
+# Verify token was retrieved (non-empty string)
+echo "token len: ${#ADMIN_TOKEN}"
 ```
 
 ```javascript
@@ -388,16 +406,16 @@ curl -s http://127.0.0.1:8090/api/collections/todos \
   -H "Authorization: $ADMIN_TOKEN" | jq .
 
 # Create a collection
+# NOTE: Use "fields" (not "schema") for PocketBase v0.39+
 curl -s -X POST http://127.0.0.1:8090/api/collections \
   -H "Content-Type: application/json" \
   -H "Authorization: $ADMIN_TOKEN" \
   -d '{
     "name": "todos",
     "type": "base",
-    "schema": [
+    "fields": [
       { "name": "text",    "type": "text",    "required": true },
-      { "name": "done",    "type": "bool",    "required": false },
-      { "name": "user",    "type": "relation","options": {"collectionId": "_pb_users_auth_"} }
+      { "name": "done",    "type": "bool" }
     ],
     "listRule": "",
     "viewRule": "",
@@ -406,13 +424,14 @@ curl -s -X POST http://127.0.0.1:8090/api/collections \
     "deleteRule": ""
   }'
 
-# Update a collection (add a field)
+# Add fields to an existing collection (PATCH appends new fields)
+# NOTE: Only include NEW fields in the array, not existing ones.
+# Existing fields are preserved. To modify an existing field,
+# you must include ALL fields in the full array.
 curl -s -X PATCH http://127.0.0.1:8090/api/collections/todos \
   -H "Content-Type: application/json" \
   -H "Authorization: $ADMIN_TOKEN" \
-  -d '{"schema": [
-    { "name": "text",     "type": "text", "required": true },
-    { "name": "done",     "type": "bool" },
+  -d '{"fields": [
     { "name": "priority", "type": "number" }
   ]}'
 
@@ -443,16 +462,18 @@ curl -s -X DELETE http://127.0.0.1:8090/api/collections/todos \
 # List records (paginated)
 curl "http://127.0.0.1:8090/api/collections/todos/records?page=1&perPage=30"
 
-# List all records (no pagination)
-curl "http://127.0.0.1:8090/api/collections/todos/records?perPage=500"
+# List records (paginated, max 200 per page in PB v0.39)
+curl "http://127.0.0.1:8090/api/collections/todos/records?page=1&perPage=200"
 
 # Filter records
 curl "http://127.0.0.1:8090/api/collections/todos/records?filter=(done=false)"
 curl "http://127.0.0.1:8090/api/collections/todos/records?filter=(text~'milk')"
 
 # Sort records
-curl "http://127.0.0.1:8090/api/collections/todos/records?sort=-created"
-curl "http://127.0.0.1:8090/api/collections/todos/records?sort=+priority,-created"
+# WARNING: Only sort by fields that exist on the collection.
+# If the collection has no "created" field, use "id" instead.
+curl "http://127.0.0.1:8090/api/collections/todos/records?sort=-id"
+curl "http://127.0.0.1:8090/api/collections/todos/records?sort=+priority,-id"
 
 # Expand a relation field
 curl "http://127.0.0.1:8090/api/collections/todos/records?expand=user"
@@ -479,15 +500,24 @@ curl -X DELETE "http://127.0.0.1:8090/api/collections/todos/records/RECORD_ID"
 ```javascript
 const pb = new PocketBase('http://127.0.0.1:8090');
 
-// Fetch all records
-const records = await pb.collection('todos').getFullList({ sort: '-created' });
-
-// Fetch paginated
-const page = await pb.collection('todos').getList(1, 30, {
+// Fetch records (paginated — max 200 per page in PB v0.39)
+// NOTE: getFullList sends perPage=1000 which returns 400 on PB v0.39.
+// Always use getList instead.
+const page = await pb.collection('todos').getList(1, 200, {
   filter: 'done = false',
-  sort: '-created',
+  sort: '-id',
 });
 // page.items, page.totalItems, page.totalPages
+
+// For "get all" behavior, use getList with perPage=200 and loop if needed:
+let all = [];
+let page = 1;
+while (true) {
+  const result = await pb.collection('todos').getList(page, 200, { sort: '-id' });
+  all = all.concat(result.items);
+  if (result.items.length < 200) break;
+  page++;
+}
 
 // Fetch one record
 const record = await pb.collection('todos').getOne('RECORD_ID');
@@ -501,10 +531,10 @@ const updated = await pb.collection('todos').update('RECORD_ID', { done: true })
 // Delete
 await pb.collection('todos').delete('RECORD_ID');
 
-// Filter syntax examples
-await pb.collection('todos').getFullList({ filter: 'done = false' });
-await pb.collection('todos').getFullList({ filter: 'text ~ "milk"' });
-await pb.collection('todos').getFullList({ filter: 'created >= "2024-01-01"' });
+// Filter syntax examples (use with getList — getFullList is broken on PB v0.39)
+await pb.collection('todos').getList(1, 200, { filter: 'done = false' });
+await pb.collection('todos').getList(1, 200, { filter: 'text ~ "milk"' });
+await pb.collection('todos').getList(1, 200, { filter: 'created >= "2024-01-01"' });
 ```
 
 ### Filter Syntax
@@ -630,7 +660,8 @@ function app() {
     async init() {
       this.loading = true;
       try {
-        this.items = await pb.collection('items').getFullList();
+        const page = await pb.collection('items').getList(1, 200, { sort: '-id' });
+        this.items = page.items;
       } catch (err) {
         this.error = err.message;
       } finally {
@@ -771,15 +802,24 @@ If this fails: Pocketbase is not running. Start it with `./pocketbase serve`.
 ### Step 2 — Inspect the Schema
 
 ```bash
-# Get admin token first
-ADMIN_TOKEN=$(curl -s -X POST http://127.0.0.1:8090/api/admins/auth-with-password \
+# Get admin token first (PB v0.39 uses _superusers collection)
+ADMIN_TOKEN=$(curl -s -X POST http://127.0.0.1:8090/api/collections/_superusers/auth-with-password \
   -H "Content-Type: application/json" \
   -d '{"identity":"admin@local.dev","password":"password1234"}' | jq -r '.token')
 
+# Verify token works — expect non-empty string
+echo "token len: ${#ADMIN_TOKEN}"
+
 # List all collections
 curl -s http://127.0.0.1:8090/api/collections \
-  -H "Authorization: $ADMIN_TOKEN" | jq '[.items[] | {name: .name, fields: [.schema[].name]}]'
+  -H "Authorization: $ADMIN_TOKEN" | jq '.items[].name'
+
+# Inspect a single collection's fields
+curl -s http://127.0.0.1:8090/api/collections/todos \
+  -H "Authorization: $ADMIN_TOKEN" | jq '.fields[] | {name, type, required, system}'
 ```
+
+**CRITICAL: Verify field names and types match what your code uses.** If your JS sorts by `-created`, the collection MUST have a `created` field. If it doesn't, use `-id` or add the field.
 
 Use this to confirm collections exist before testing CRUD.
 
@@ -846,14 +886,46 @@ cat pb_public/index.html
 
 The file is ground truth. The code in the browser is this file.
 
-### Step 7 — Confirm the Feedback Loop
+### Step 7 — End-to-End Smoke Test
+
+**Always run this after creating or modifying a collection.** It catches schema mismatches, missing fields, and sort/filter errors before they hit the browser.
+
+```bash
+# 1. Create a test record
+CREATE=$(curl -s -X POST http://127.0.0.1:8090/api/collections/todos/records \
+  -H "Content-Type: application/json" \
+  -d '{"text": "smoke test", "done": false}')
+echo "$CREATE" | jq '{id: .id, text: .text, done: .done}'
+ID=$(echo $CREATE | jq -r '.id')
+
+# 2. Read it back
+curl -s "http://127.0.0.1:8090/api/collections/todos/records/$ID" | jq '{id: .id, text: .text}'
+
+# 3. List with the SAME sort your app uses (catches missing sort field)
+curl -s "http://127.0.0.1:8090/api/collections/todos/records?page=1&perPage=200&sort=-id" | jq '.items | length'
+
+# 4. Update it
+curl -s -X PATCH "http://127.0.0.1:8090/api/collections/todos/records/$ID" \
+  -H "Content-Type: application/json" \
+  -d '{"done": true}' | jq '.done'
+
+# 5. Delete it
+curl -s -X DELETE "http://127.0.0.1:8090/api/collections/todos/records/$ID" -w " (HTTP %{http_code})"
+
+# 6. Verify deletion (expect 404)
+curl -s "http://127.0.0.1:8090/api/collections/todos/records/$ID" | jq '.message'
+```
+
+All 6 steps must pass. If any fails, fix the schema or code before proceeding.
+
+### Step 8 — Confirm the Feedback Loop
 
 The full loop (edit → verify) takes under 10 seconds:
 
 ```
 1. Edit pb_public/index.html
-2. curl a CRUD operation against the relevant collection
-3. Confirm the response is correct JSON
+2. Run the e2e smoke test (Step 7)
+3. Confirm all 6 steps pass
 4. Optionally: refresh the browser (or browser-sync does it automatically)
 ```
 
@@ -885,6 +957,29 @@ curl -s -X POST http://127.0.0.1:8090/api/collections/COLLECTION/records \
 The `data` field shows which fields failed validation and why.
 
 **Fix:** Check the schema — field names, required fields, type constraints. Confirm the payload matches the schema exactly (field names are case-sensitive).
+
+---
+
+### Problem: 400 Bad Request on list (getList / getFullList)
+
+**Diagnosis:**
+This usually means a sort field doesn't exist on the collection, or `perPage` exceeds the max (200 in PB v0.39).
+
+```bash
+# Check what fields exist
+ADMIN_TOKEN=$(curl -s -X POST http://127.0.0.1:8090/api/collections/_superusers/auth-with-password \
+  -H "Content-Type: application/json" \
+  -d '{"identity":"admin@local.dev","password":"password1234"}' | jq -r '.token')
+curl -s http://127.0.0.1:8090/api/collections/COLLECTION_NAME \
+  -H "Authorization: $ADMIN_TOKEN" | jq '.fields[] | .name'
+
+# Test the exact list query your app uses (replace -created with your sort field)
+curl -s "http://127.0.0.1:8090/api/collections/COLLECTION_NAME/records?page=1&perPage=200&sort=-id" | jq '.items | length'
+
+# If sort=-created fails but sort=-id works, the collection lacks a "created" field.
+```
+
+**Fix:** Either add a `created` autodate field to the collection, or change the sort in your JS to use a field that exists (e.g., `-id`). Also ensure `perPage` ≤ 200.
 
 ---
 
@@ -926,27 +1021,31 @@ The SDK call probably threw an error that was silently caught. Always log errors
 async add() {
   try {
     const record = await pb.collection('todos').create({ text: this.newName });
+    debugLog('add', { id: record.id, text: record.text });
     this.items.unshift(record);
   } catch (err) {
-    console.error('Create failed:', err);   // add this
+    debugLog('add error', err);
     showToast(err.message);
   }
 }
 ```
 
-**Fix:** Check the browser console. The error message points to the root cause.
+**How to check:** Open browser console (F12 → Console tab). Look for `[add]` or `[add error]` entries. The error message points to the root cause.
+
+**Agent action:** Ask the user to open browser console and paste any `[error]` lines. This gives the agent direct visibility into SDK failures.
 
 ---
 
 ### Problem: Records exist in the DB but UI shows empty
 
 **Diagnosis:**
-1. Confirm records exist: `curl http://127.0.0.1:8090/api/collections/todos/records | jq '.items | length'`
+1. Confirm records exist: `curl http://127.0.0.1:8090/api/collections/todos/records?perPage=200 | jq '.items | length'`
 2. Confirm the collection name in the JS matches exactly.
 3. Confirm the API rule allows listing (should be `""` for public apps).
-4. Check for a JS error in `init()` — if it throws, `items` stays empty.
+4. **Most common cause:** `init()` list query fails silently (e.g., sort field doesn't exist). Check browser console for `[init error]` entries.
+5. Verify the sort field exists: `curl -s http://127.0.0.1:8090/api/collections/todos -H "Authorization: $ADMIN_TOKEN" | jq '.fields[] | .name'`
 
-**Fix:** Wrap `init()` in try/catch with `console.error`. The error message will identify the problem.
+**Fix:** Use `debugLog('init error', err)` in the catch block. Check browser console. If sort field is missing, either add it to the collection or change the sort in JS to use an existing field.
 
 ---
 
