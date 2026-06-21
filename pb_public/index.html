@@ -102,8 +102,8 @@
 
         async init() {
           try {
-            const page = await pb.collection('todos').getList(1, 500, {
-              sort: '-created',
+            const page = await pb.collection('todos').getList(1, 200, {
+              sort: '-id',
               skipTotal: true,
             });
             this.todos = page.items;
