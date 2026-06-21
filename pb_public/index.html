@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Todo</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script defer src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/pocketbase/dist/pocketbase.umd.js"></script>
+</head>
+<body class="bg-white min-h-screen font-sans">
+
+  <!-- Toast -->
+  <div id="toast"
+       class="fixed top-4 right-4 z-50 hidden bg-red-700 text-white px-4 py-2 rounded-xl text-sm">
+  </div>
+
+  <div x-data="app()" x-init="init()" class="mx-auto max-w-md px-4 py-8 space-y-8">
+
+    <!-- Header -->
+    <h1 class="text-3xl font-semibold tracking-tight text-zinc-950">Todo</h1>
+
+    <!-- Loading -->
+    <div x-show="loading" class="text-center text-zinc-400 py-12">
+      <p class="animate-pulse">Loading...</p>
+    </div>
+
+    <!-- Error -->
+    <div x-show="error && !loading"
+         x-text="error"
+         class="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+    </div>
+
+    <!-- Content -->
+    <div x-show="!loading" class="space-y-6">
+
+      <!-- Add form -->
+      <div class="flex gap-2">
+        <input x-model="newText"
+               @keydown.enter="add()"
+               type="text"
+               placeholder="New task..."
+               class="flex-1 rounded-xl border border-zinc-200 px-4 py-3 text-sm outline-none focus:border-zinc-400">
+        <button @click="add()"
+                class="rounded-xl bg-zinc-950 px-5 py-3 text-sm font-medium text-white hover:bg-zinc-800 transition-colors">
+          Add
+        </button>
+      </div>
+
+      <!-- List -->
+      <div class="divide-y divide-zinc-200">
+        <template x-for="todo in todos" :key="todo.id">
+          <div class="flex items-center gap-3 py-4">
+            <input type="checkbox"
+                   :checked="todo.done"
+                   @change="toggle(todo)"
+                   class="h-5 w-5 rounded border-zinc-300 text-zinc-950 focus:ring-zinc-950 cursor-pointer">
+            <span x-text="todo.text"
+                  class="flex-1 text-sm"
+                  :class="todo.done ? 'text-zinc-400 line-through' : 'text-zinc-950'">
+            </span>
+            <button @click="remove(todo.id)"
+                    class="text-zinc-400 hover:text-red-700 text-xs transition-colors">
+              Delete
+            </button>
+          </div>
+        </template>
+      </div>
+
+      <!-- Empty state -->
+      <div x-show="todos.length === 0" class="text-center py-12 space-y-3">
+        <p class="text-sm text-zinc-500">No tasks yet.</p>
+        <p class="text-xs text-zinc-400">Add your first task above.</p>
+      </div>
+
+      <!-- Stats -->
+      <div x-show="todos.length > 0" class="text-xs text-zinc-400 text-center">
+        <span x-text="todos.filter(t => t.done).length"></span> of
+        <span x-text="todos.length"></span> done
+      </div>
+
+    </div>
+  </div>
+
+  <script>
+    const pb = new PocketBase('http://127.0.0.1:8090');
+
+    function showToast(msg) {
+      const el = document.getElementById('toast');
+      el.textContent = msg;
+      el.classList.remove('hidden');
+      setTimeout(() => el.classList.add('hidden'), 4000);
+    }
+
+    function app() {
+      return {
+        todos: [],
+        newText: '',
+        loading: true,
+        error: null,
+
+        async init() {
+          try {
+            this.todos = await pb.collection('todos').getFullList({ sort: '-created' });
+          } catch (err) {
+            this.error = err.message;
+          } finally {
+            this.loading = false;
+          }
+        },
+
+        async add() {
+          if (!this.newText.trim()) return;
+          try {
+            const record = await pb.collection('todos').create({
+              text: this.newText.trim(),
+              done: false,
+            });
+            this.todos.unshift(record);
+            this.newText = '';
+          } catch (err) {
+            showToast(err.message);
+          }
+        },
+
+        async toggle(todo) {
+          try {
+            const updated = await pb.collection('todos').update(todo.id, {
+              done: !todo.done,
+            });
+            todo.done = updated.done;
+          } catch (err) {
+            showToast(err.message);
+          }
+        },
+
+        async remove(id) {
+          try {
+            await pb.collection('todos').delete(id);
+            this.todos = this.todos.filter(t => t.id !== id);
+          } catch (err) {
+            showToast(err.message);
+          }
+        },
+      }
+    }
+  </script>
+
+</body>
+</html>
