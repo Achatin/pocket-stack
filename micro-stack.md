@@ -280,6 +280,8 @@ This is the starting point for every app. Copy it verbatim, then modify.
   <script>
     // PocketBase client — singleton, used everywhere
     const pb = new PocketBase(window.location.origin);
+    // Disable auto-cancellation: Alpine re-renders can abort in-flight requests
+    pb.autoCancellation(false);
 
     // Global error display utility
     function showToast(msg) {
@@ -1005,6 +1007,19 @@ curl -s http://127.0.0.1:8090/api/collections \
 Check if the collection exists and the name is spelled correctly.
 
 **Fix:** Create the collection if missing (see Schema Management above). Fix the name if misspelled.
+
+---
+
+### Problem: "The request was aborted (most likely autocancelled)"
+
+**Diagnosis:**
+The PB JS SDK's auto-cancellation is on by default. When Alpine re-renders (e.g., toggling a checkbox), a new request with the same URL aborts the in-flight one.
+
+**Fix:** Disable auto-cancellation on the client:
+```javascript
+const pb = new PocketBase(window.location.origin);
+pb.autoCancellation(false);
+```
 
 ---
 
