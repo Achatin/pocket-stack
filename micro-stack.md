@@ -799,6 +799,18 @@ curl -s http://127.0.0.1:8090/api/health
 
 If this fails: Pocketbase is not running. Start it with `./pocketbase serve`.
 
+### Step 1.5 — Run the Verification Script
+
+Every micro-app includes a `verify.sh` script. **Run it after every change.** It autonomously checks server health, auth, schema, sort field existence, and full CRUD — catching the most common bugs before they hit the browser.
+
+```bash
+./verify.sh
+```
+
+Expected output: `Results: 12 passed, 0 failed` / `ALL PASSED — app is healthy`
+
+If any step fails, the script tells you exactly what's wrong and how to fix it. **Do not proceed until verify.sh exits 0.**
+
 ### Step 2 — Inspect the Schema
 
 ```bash
@@ -1381,6 +1393,7 @@ These patterns break the stack's core properties and must be avoided.
 | Store secrets in `index.html` | The file is served publicly; never put API keys or admin passwords here |
 | Mutate `pb_data/` directly | Always go through the API or admin UI; direct DB edits bypass validation |
 | Ignore error responses | Always read `err.message` and `err.data`; never assume a request succeeded |
+| Skip verification after changes | Always run `./verify.sh` after editing code or schema; catches bugs in 5 seconds |
 
 ---
 
@@ -1393,8 +1406,8 @@ These patterns break the stack's core properties and must be avoided.
 # Health check
 curl http://127.0.0.1:8090/api/health
 
-# Get admin token
-ADMIN_TOKEN=$(curl -s -X POST http://127.0.0.1:8090/api/admins/auth-with-password \
+# Get admin token (PB v0.39+)
+ADMIN_TOKEN=$(curl -s -X POST http://127.0.0.1:8090/api/collections/_superusers/auth-with-password \
   -H "Content-Type: application/json" \
   -d '{"identity":"admin@local.dev","password":"password1234"}' | jq -r '.token')
 
