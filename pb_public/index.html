@@ -85,6 +85,8 @@
 
   <script>
     const pb = new PocketBase(window.location.origin);
+    // Disable auto-cancellation: Alpine re-renders can abort in-flight requests
+    pb.autoCancellation(false);
 
     function showToast(msg) {
       const el = document.getElementById('toast');
