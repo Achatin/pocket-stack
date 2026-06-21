@@ -40,6 +40,7 @@
                @keydown.enter="add()"
                type="text"
                placeholder="New task..."
+               maxlength="200"
                class="flex-1 rounded-xl border border-zinc-200 px-4 py-3 text-sm outline-none focus:border-zinc-400">
         <button @click="add()"
                 class="rounded-xl bg-zinc-950 px-5 py-3 text-sm font-medium text-white hover:bg-zinc-800 transition-colors">
@@ -83,7 +84,7 @@
   </div>
 
   <script>
-    const pb = new PocketBase('http://127.0.0.1:8090');
+    const pb = new PocketBase(window.location.origin);
 
     function showToast(msg) {
       const el = document.getElementById('toast');
@@ -124,13 +125,20 @@
         },
 
         async toggle(todo) {
+          if (todo._pending) return;
+          todo._pending = true;
+          const previous = todo.done;
           try {
+            todo.done = !todo.done;
             const updated = await pb.collection('todos').update(todo.id, {
-              done: !todo.done,
+              done: todo.done,
             });
             todo.done = updated.done;
           } catch (err) {
+            todo.done = previous;
             showToast(err.message);
+          } finally {
+            todo._pending = false;
           }
         },
 
